@@ -4,20 +4,19 @@ mod traits;
 use cell::*;
 pub use traits::*;
 
+use serde::{Deserialize, Serialize};
+
 /// a specialized packed quadtree, for use in another project.
 /// D is the max recursion depth, allowing up to 2^D coordinates.
 /// this data format makes insertion / deletion slower, but query is D at worst.
-#[derive(Debug)]
-pub struct QuadTree<T, const D: u32>
-where
-    T: std::fmt::Debug
-{
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct QuadTree<T, const D: u32> {
     /// the root cell is at 0, with node cells referencing indices to the next cells.
     /// indices are absolute.
     cells: Vec<Cell<T>>,
 }
 
-impl<T: std::fmt::Debug, const D: u32> Default for QuadTree<T, D> {
+impl<T, const D: u32> Default for QuadTree<T, D> {
     fn default() -> Self {
         Self {
             cells: vec![Cell::new_empty(usize::MAX)],
@@ -25,7 +24,7 @@ impl<T: std::fmt::Debug, const D: u32> Default for QuadTree<T, D> {
     }
 }
 
-impl<T: std::fmt::Debug, const D: u32> QuadTree<T, D> {
+impl<T, const D: u32> QuadTree<T, D> {
     pub fn new() -> Self {
         Default::default()
     }
@@ -106,12 +105,6 @@ impl<T: std::fmt::Debug, const D: u32> QuadTree<T, D> {
         })
     }
     
-    pub fn pretty_print(&self) {
-        let x0 = 0;
-        let y0 = 0;
-        self.pretty_print_one(x0, y0, D, 0);
-    }
-    
     // ---------------- internal functions ----------------------
     
     fn insert_at(&mut self, at: usize, depth: u32, (x, y): (u32, u32), t: T) -> bool {
@@ -151,37 +144,6 @@ impl<T: std::fmt::Debug, const D: u32> QuadTree<T, D> {
                 let cell_i = Self::coord2cell_i(x, y, depth);
                 //println!("  cell {cell_i}");
                 self.insert_at(cells[cell_i], depth - 1, (x, y), t)
-            }
-        }
-    }
-    
-    fn pretty_print_one(&self, x0: u32, y0: u32, depth: u32, i: usize) {
-        let w = 2u32.pow(depth);
-        if w > 1 {
-            let w2 = w / 2;
-            let w = w - 1;
-            let x1 = x0 + w2;
-            let y1 = y0 + w2;
-            let cell = &self.cells[i];
-            if let Some(d) = &cell.data {
-                let (s, inds) = match d {
-                    CellData::Leaf(pl) => (format!(" {pl:?}"), None),
-                    CellData::Node(inds) => ("".to_owned(), Some(inds))
-                };
-                println!("{:indent$}({x0:0>5}~{:0>5}, {y0:0>5}~{:0>5}) => {s}", "", x0+w, y0+w, indent=((D - depth) * 2) as usize);
-                if let Some(inds) = inds {
-                    let dd = [(x0, y0), (x1, y0), (x0, y1), (x1, y1)];
-                    for (ind, (x, y)) in inds.iter().zip(dd) {
-                        self.pretty_print_one(x, y, depth - 1, *ind);
-                    }
-                }
-            }
-        }
-        else {
-            let cell = &self.cells[i];
-            if let Some(d) = &cell.data {
-                let CellData::Leaf(pl) = d else { unreachable!() };
-                println!("{:indent$}({x0:0>5}~{x0:0>5}, {y0:0>5}~{y0:0>5}) => {pl:?}", "", indent=(D * 2) as usize)
             }
         }
     }
@@ -280,6 +242,45 @@ impl<T: std::fmt::Debug, const D: u32> QuadTree<T, D> {
                     }
                     self.push_if_in_region(d2, jj[jb], x0, y0, x1, y1, res);
                 }
+            }
+        }
+    }
+}
+
+impl<T: std::fmt::Debug, const D: u32> QuadTree<T, D> {
+    pub fn pretty_print(&self) {
+        let x0 = 0;
+        let y0 = 0;
+        self.pretty_print_one(x0, y0, D, 0);
+    }
+    
+    fn pretty_print_one(&self, x0: u32, y0: u32, depth: u32, i: usize) {
+        let w = 2u32.pow(depth);
+        if w > 1 {
+            let w2 = w / 2;
+            let w = w - 1;
+            let x1 = x0 + w2;
+            let y1 = y0 + w2;
+            let cell = &self.cells[i];
+            if let Some(d) = &cell.data {
+                let (s, inds) = match d {
+                    CellData::Leaf(pl) => (format!(" {pl:?}"), None),
+                    CellData::Node(inds) => ("".to_owned(), Some(inds))
+                };
+                println!("{:indent$}({x0:0>5}~{:0>5}, {y0:0>5}~{:0>5}) => {s}", "", x0+w, y0+w, indent=((D - depth) * 2) as usize);
+                if let Some(inds) = inds {
+                    let dd = [(x0, y0), (x1, y0), (x0, y1), (x1, y1)];
+                    for (ind, (x, y)) in inds.iter().zip(dd) {
+                        self.pretty_print_one(x, y, depth - 1, *ind);
+                    }
+                }
+            }
+        }
+        else {
+            let cell = &self.cells[i];
+            if let Some(d) = &cell.data {
+                let CellData::Leaf(pl) = d else { unreachable!() };
+                println!("{:indent$}({x0:0>5}~{x0:0>5}, {y0:0>5}~{y0:0>5}) => {pl:?}", "", indent=(D * 2) as usize)
             }
         }
     }

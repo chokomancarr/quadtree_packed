@@ -1,6 +1,7 @@
 
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Cell<T> {
     //pub mask_x: u32,
     //pub mask_y: u32,
@@ -8,7 +9,7 @@ pub struct Cell<T> {
     pub data: Option<CellData<T>>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum CellData<T> {
     Leaf(Payload<T>),
     Node([usize; 4])
@@ -23,7 +24,7 @@ impl<T> Cell<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Payload<T> {
     pub x: u32,
     pub y: u32,
