@@ -4,7 +4,7 @@
 pub struct Cell<T> {
     //pub mask_x: u32,
     //pub mask_y: u32,
-    pub parent: (usize, u8),
+    pub parent: usize,
     pub data: Option<CellData<T>>,
 }
 
@@ -15,9 +15,9 @@ pub enum CellData<T> {
 }
 
 impl<T> Cell<T> {
-    pub fn new_empty(parent: usize, quad: u8) -> Self {
+    pub fn new_empty(parent: usize) -> Self {
         Self {
-            parent: (parent, quad),
+            parent,
             data: None
         }
     }
