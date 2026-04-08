@@ -1,0 +1,9 @@
+[package]
+name = "quadtree"
+edition = "2018"
+
+[dependencies]
+serde = { version = "1.0.218", features = ["derive"]}
+
+[features]
+verbose = []
