@@ -1,4 +1,6 @@
 
+pub struct QTCoord(pub (u32, u32));
+
 pub trait AsQTCoord {
     fn as_quadtree_coord(self) -> (u32, u32);
 }

@@ -83,10 +83,10 @@ impl<T, const D: u32> QuadTree<T, D> {
     }
     
     /// iterate over all stored items
-    pub fn iter(&self) -> impl Iterator<Item=((u32, u32), &T)> {
+    pub fn iter(&self) -> impl Iterator<Item=(QTCoord, &T)> {
         self.cells.iter().filter_map(|c| {
             if let Some(CellData::Leaf(pl)) = &c.data {
-                Some(((pl.x, pl.y), &pl.data))
+                Some((QTCoord((pl.x, pl.y)), &pl.data))
             }
             else {
                 None
@@ -94,10 +94,10 @@ impl<T, const D: u32> QuadTree<T, D> {
         })
     }
     /// iterate over all stored items
-    pub fn iter_mut(&mut self) -> impl Iterator<Item=((u32, u32), &mut T)> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item=(QTCoord, &mut T)> {
         self.cells.iter_mut().filter_map(|c| {
             if let Some(CellData::Leaf(pl)) = &mut c.data {
-                Some(((pl.x, pl.y), &mut pl.data))
+                Some((QTCoord((pl.x, pl.y)), &mut pl.data))
             }
             else {
                 None
