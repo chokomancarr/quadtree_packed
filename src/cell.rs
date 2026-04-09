@@ -3,8 +3,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Cell<T> {
-    //pub mask_x: u32,
-    //pub mask_y: u32,
     pub parent: usize,
     pub data: Option<CellData<T>>,
 }

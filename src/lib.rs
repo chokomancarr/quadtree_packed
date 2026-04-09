@@ -1,8 +1,12 @@
 mod cell;
 mod traits;
+mod morton;
 
 use cell::*;
+use morton::*;
 pub use traits::*;
+
+use std::ops::RangeInclusive;
 
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +29,7 @@ impl<T, const D: u32> Default for QuadTree<T, D> {
 }
 
 impl<T, const D: u32> QuadTree<T, D> {
+
     pub fn new() -> Self {
         Default::default()
     }
@@ -32,16 +37,22 @@ impl<T, const D: u32> QuadTree<T, D> {
     /// adds a point into the tree with associated data.
     /// returns if the insertion succeeded, i.e. no clashes occured.
     pub fn insert<C: AsQTCoord>(&mut self, xy: C, data: T) -> bool {
+        //let (x, y) = xy.as_quadtree_coord();
         let (x, y) = xy.as_quadtree_coord();
-        assert!(x.max(y) < 2u32.pow(D));
-        self.insert_at(0, D, (x, y), data)
+        let z: Zo = (x, y).into();
+        assert!(z.in_range(D));
+        let payload = CellData::Leaf(Payload {
+            x, y, data
+        });
+        self.do_insert(D, z, payload)
     }
     
     /// removes a point and returns the stored data.
     pub fn remove<C: AsQTCoord>(&mut self, xy: C) -> Option<T> {
         let (x, y) = xy.as_quadtree_coord();
-        assert!(x.max(y) < 2u32.pow(D));
-        let (d, i) = self.get_in_cell(D, 0, x, y)?;
+        let z: Zo = (x, y).into();
+        assert!(z.in_range(D));
+        let (d, i) = self.get_in_cell(D, x, y, z)?;
         let res = self.cells[i].data.take().unwrap();
         
         self.prune_cell(i, d, x, y);
@@ -52,8 +63,9 @@ impl<T, const D: u32> QuadTree<T, D> {
     
     pub fn get<C: AsQTCoord>(&self, xy: C) -> Option<&T> {
         let (x, y) = xy.as_quadtree_coord();
-        assert!(x.max(y) < 2u32.pow(D));
-        self.get_in_cell(D, 0, x, y).map(move |(_, i)| {
+        let z: Zo = (x, y).into();
+        assert!(z.in_range(D));
+        self.get_in_cell(D, x, y, z).map(move |(_, i)| {
             let c = &self.cells[i];
             let Some(CellData::Leaf(pl)) = &c.data else { unreachable!() };
             &pl.data
@@ -62,8 +74,9 @@ impl<T, const D: u32> QuadTree<T, D> {
     
     pub fn get_mut<C: AsQTCoord>(&mut self, xy: C) -> Option<&mut T> {
         let (x, y) = xy.as_quadtree_coord();
-        assert!(x.max(y) < 2u32.pow(D));
-        self.get_in_cell(D, 0, x, y).map(move |(_, i)| {
+        let z: Zo = (x, y).into();
+        assert!(z.in_range(D));
+        self.get_in_cell(D, x, y, z).map(move |(_, i)| {
             let c = &mut self.cells[i];
             let Some(CellData::Leaf(pl)) = &mut c.data else { unreachable!() };
             &mut pl.data
@@ -76,9 +89,17 @@ impl<T, const D: u32> QuadTree<T, D> {
         let (x0, y0) = xy.as_quadtree_coord();
         let x1 = x0 + w - 1;
         let y1 = y0 + h - 1;
-        assert!(x0.max(y0).max(x1).max(y1) < 2u32.pow(D));
+        let z0: Zo = (x0, y0).into();
+        let z1: Zo = (x1, y1).into();
+        assert!(z0.in_range(D) && z1.in_range(D));
+        let query = PushRegionQuery {
+            x_range: x0..=x1,
+            y_range: y0..=y1,
+            z0,
+            z1,
+        };
         let mut res = vec![];
-        self.push_if_in_region(D, 0, x0, y0, x1, y1, &mut res);
+        self.push_if_in_region(D, 0, &query, &mut res);
         res
     }
     
@@ -107,43 +128,47 @@ impl<T, const D: u32> QuadTree<T, D> {
     
     // ---------------- internal functions ----------------------
     
-    fn insert_at(&mut self, at: usize, depth: u32, (x, y): (u32, u32), t: T) -> bool {
-        //println!("try {at} @ depth {depth}");
-        let cell = &mut self.cells[at];
-        let data = &mut cell.data;
-        match data {
-            None => {//if the cell is empty, put directly
-                *data = Some(CellData::Leaf(Payload {
-                    x, y, data: t
-                }));
-                return true;
-            }
-            Some(d) => {
-                if depth == 0 {
-                    //same cell at lowest depth, so its the same coord.
-                    //fail if occupied.
-                    //println!("reached depth 0!");
-                    return false;
+    fn do_insert(&mut self, mut depth: u32, z: Zo, pl: CellData<T>) -> bool {
+        let mut at = 0;
+        
+        loop {
+            let cell = &mut self.cells[at];
+            let data = &mut cell.data;
+            match data {
+                None => {//if the cell is empty, put directly
+                    *data = Some(pl);
+                    return true;
                 }
-                let cells = match d {
-                    CellData::Leaf(_) => { //alloc a new node, place the old in
-                        let plc = data.take().unwrap();
-                        let CellData::Leaf(pl) = &plc else { unreachable!() };
-                        let new_cells = self.extend_node(at);
-                        self.cells[at].data = Some(CellData::Node(new_cells));
-                        let cell_i = Self::coord2cell_i(pl.x, pl.y, depth);
-                        let nd = &mut self.cells[new_cells[cell_i]];
-                        nd.data = Some(plc);
-                        //println!("  move {cell_i}");
-                        //self.pretty_print();
-                        new_cells
+                Some(d) => {
+                    if depth == 0 {
+                        //same cell at lowest depth, so its the same coord.
+                        //fail if occupied.
+                        //println!("reached depth 0!");
+                        return false;
                     }
-                    CellData::Node(cells) => *cells
-                };
-                //find the cell for the new data, and recurse
-                let cell_i = Self::coord2cell_i(x, y, depth);
-                //println!("  cell {cell_i}");
-                self.insert_at(cells[cell_i], depth - 1, (x, y), t)
+                    let cells = match d {
+                        CellData::Leaf(_) => { //alloc a new node, place the old in
+                            let plc = data.take().unwrap();
+                            let CellData::Leaf(pl) = &plc else { unreachable!() };
+                            let new_cells = self.extend_node(at);
+                            self.cells[at].data = Some(CellData::Node(new_cells));
+                            let cell_i = get_cell_xy(pl.x, pl.y, depth);
+                            let nd = &mut self.cells[new_cells[cell_i]];
+                            nd.data = Some(plc);
+                            //println!("  move {cell_i}");
+                            //self.pretty_print();
+                            new_cells
+                        }
+                        CellData::Node(cells) => *cells
+                    };
+                    //find the cell for the new data, and recurse
+                    //let cell_i = get_cell_xy(x, y, depth);
+                    let cell_i = z.get_cell(depth);
+                    //println!("  cell {cell_i}");
+                    //self.insert_at(cells[cell_i], depth - 1, (x, y), t)
+                    at = cells[cell_i];
+                    depth -= 1;
+                }
             }
         }
     }
@@ -154,50 +179,52 @@ impl<T, const D: u32> QuadTree<T, D> {
         [n, n+1, n+2, n+3]
     }
     
-    fn coord2cell_i(x: u32, y: u32, depth: u32) -> usize {
-        let d = depth - 1;
-        let dx = (x >> d) & 1;
-        let dy = (y >> d) & 1;
-        let i = (dx + dy * 2) as usize;
-        i
-    }
-    
-    fn get_in_cell(&self, depth: u32, i: usize, x: u32, y: u32) -> Option<(u32, usize)> {
-        let c = &self.cells[i];
-        let c = &c.data.as_ref()?;
-        match c {
-            CellData::Leaf(pl) => (pl.x == x && pl.y == y).then(|| (depth, i)),
-            CellData::Node(jj) => {
-                let cell_i = Self::coord2cell_i(x, y, depth);
-                self.get_in_cell(depth - 1, jj[cell_i], x, y)
+    fn get_in_cell(&self, mut depth: u32, x: u32, y: u32, z: Zo) -> Option<(u32, usize)> {
+        let mut at = 0;
+        loop {
+            let c = &self.cells[at];
+            let c = &c.data.as_ref()?;
+            match c {
+                CellData::Leaf(pl) => return (pl.x == x && pl.y == y).then(|| (depth, at)),
+                CellData::Node(jj) => {
+                    //let cell_i = get_cell_xy(x, y, depth);
+                    //self.get_in_cell(depth - 1, 0, x, y)
+                    let cell_i = z.get_cell(depth);
+                    depth -= 1;
+                    at = jj[cell_i];
+                }
             }
         }
     }
     
     //TODO: make this faster, now it accesses all children nodes to check if empty
-    fn prune_cell(&mut self, i: usize, depth: u32, x: u32, y: u32) {
-        let cell = &self.cells[i];
-        //if this cell is empty, or all children are empty, delete and recurse up
-        let par = cell.parent;
-        if par == usize::MAX {
-            //we are at root, do not remove
-            return
-        }
-        if let Some(CellData::Node(jj)) = &cell.data {
-           let mut jj = *jj;
-           if jj.iter().any(|j| self.cells[*j].data.is_some()) {
-                //theres a valid child, do not delete
+    fn prune_cell(&mut self, mut i: usize, mut depth: u32, x: u32, y: u32) {
+        loop {
+            let cell = &self.cells[i];
+            //if this cell is empty, or all children are empty, delete and recurse up
+            let par = cell.parent;
+            if par == usize::MAX {
+                //we are at root, do not remove
                 return
-           }
-           //clear all the children
-           jj.sort_by(|a, b| b.cmp(a)); //make sure we dont invalidate other indices while deleting
-           for j in jj {
-               self.swap_rem(j, depth, x, y);
-           }
+            }
+            if let Some(CellData::Node(jj)) = &cell.data {
+               let mut jj = *jj;
+               if jj.iter().any(|j| self.cells[*j].data.is_some()) {
+                    //theres a valid child, do not delete
+                    return
+               }
+               //clear all the children
+               jj.sort_by(|a, b| b.cmp(a)); //make sure we dont invalidate other indices while deleting
+               for j in jj {
+                   self.swap_rem(j, depth, x, y);
+               }
+            }
+            //set to null and recurse
+            self.cells[i].data = None;
+            //self.prune_cell(par, depth + 1, x, y);
+            depth += 1;
+            i = par;
         }
-        //set to null and recurse
-        self.cells[i].data = None;
-        self.prune_cell(par, depth + 1, x, y);
     }
     
     fn swap_rem(&mut self, i: usize, depth: u32, x: u32, y: u32) {
@@ -206,12 +233,12 @@ impl<T, const D: u32> QuadTree<T, D> {
             let p = c.parent;
             let par = &mut self.cells[p];
             let Some(CellData::Node(jj)) = &mut par.data else { unreachable!() };
-            let cell_i = Self::coord2cell_i(x, y, depth + 1);
+            let cell_i = get_cell_xy(x, y, depth + 1);
             jj[cell_i] = i;
         }
     }
     
-    fn push_if_in_region<'a, 'b>(&'a self, depth: u32, i: usize, x0: u32, y0: u32, x1: u32, y1: u32, res: &mut Vec<&'b T>)
+    fn push_if_in_region<'a, 'b>(&'a self, depth: u32, i: usize, q: &PushRegionQuery, res: &mut Vec<&'b T>)
     where
         'a: 'b
     {
@@ -219,15 +246,15 @@ impl<T, const D: u32> QuadTree<T, D> {
         let Some(data) = &cell.data else { return };
         match data {
             CellData::Leaf(pl) => {
-                if (x0..=x1).contains(&pl.x) && (y0..=y1).contains(&pl.y) {
+                if q.x_range.contains(&pl.x) && q.y_range.contains(&pl.y) {
                     res.push(&pl.data);
                 }
             },
             CellData::Node(jj) => {
-                let ja = Self::coord2cell_i(x0, y0, depth);
-                let jb = Self::coord2cell_i(x1, y1, depth);
+                let ja = q.z0.get_cell(depth);
+                let jb = q.z1.get_cell(depth);
                 let d2 = depth - 1;
-                self.push_if_in_region(d2, jj[ja], x0, y0, x1, y1, res);
+                self.push_if_in_region(d2, jj[ja], q, res);
                 if jb != ja {
                     //we know jb cannot be smaller than ja
                     //since the data is ordered so (x right, y up):
@@ -237,14 +264,21 @@ impl<T, const D: u32> QuadTree<T, D> {
                     // 0~2; 0~3, 1~3
                     //so we only have to consider the case of 0~3
                     if ja == 0 && jb == 3 {
-                        self.push_if_in_region(d2, jj[1], x0, y0, x1, y1, res);
-                        self.push_if_in_region(d2, jj[2], x0, y0, x1, y1, res);
+                        self.push_if_in_region(d2, jj[1], q, res);
+                        self.push_if_in_region(d2, jj[2], q, res);
                     }
-                    self.push_if_in_region(d2, jj[jb], x0, y0, x1, y1, res);
+                    self.push_if_in_region(d2, jj[jb], q, res);
                 }
             }
         }
     }
+}
+
+struct PushRegionQuery {
+    x_range: RangeInclusive<u32>,
+    y_range: RangeInclusive<u32>,
+    z0: Zo,
+    z1: Zo,
 }
 
 impl<T: std::fmt::Debug, const D: u32> QuadTree<T, D> {

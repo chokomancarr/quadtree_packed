@@ -11,6 +11,8 @@ fn test_packed() {
     assert!(tree.insert((28, 20), 4));
     assert!(tree.insert((2, 5), 5));
     
+    tree.pretty_print();
+    
     assert_eq!(tree.get((2, 2)), None);
     *tree.get_mut((4, 19)).unwrap() = 9;
     
